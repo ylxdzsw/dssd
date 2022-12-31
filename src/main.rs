@@ -39,6 +39,7 @@ impl Service {
 
     fn save(&self) -> Result<(), Box<dyn Error>> {
         let config_dir = get_config_directory()?;
+        eprintln!("save to {config_dir}");
         std::fs::create_dir_all(&config_dir)?;
 
         let config_file = std::fs::OpenOptions::new()
@@ -161,11 +162,20 @@ impl CollectionHandle {
             .and_then(|b| b.as_str().map(|x| x.to_string()))
             .unwrap_or_default();
         let attributes = properties.get("org.freedesktop.Secret.Item.Attributes")
-            .and_then(|b| Some(
-                dbus::arg::cast::<PropMap>(&b.0)?.iter()
-                    .map(|(k, v)| (k.to_string(), v.as_str().unwrap().to_string()))
-                    .collect::<BTreeMap<String, String>>()
-            ))
+            .and_then(|b| {
+                let mut key = None;
+                let mut result = BTreeMap::new();
+                for x in b.0.as_iter()? {
+                    eprintln!("x {:?}", x);
+                    let x = x.as_str().unwrap().to_string();
+                    if let Some(k) = key.take() {
+                        result.insert(k, x);
+                    } else {
+                        key = Some(x)
+                    }
+                }
+                Some(result)
+            })
             .unwrap_or_default();
         
         let (_, _, content, content_type) = secret;
@@ -184,6 +194,7 @@ impl CollectionHandle {
         };
 
         service.items.insert(item_id, item);
+        service.save().unwrap();
 
         let item_id_str = format!("/org/freedesktop/secrets/collection/Login/{item_id}");
         cr.insert(item_id_str.clone(), &[item_iface_token_mutex.lock().unwrap().unwrap()], ItemHandle(item_id));
@@ -214,6 +225,7 @@ impl ItemHandle {
         let mut service = service_mutex.lock().unwrap();
         let item = service.items.get_mut(&self.0).unwrap();
         let result = cb(item);
+        item.modified = get_unix_timestamp();
         service.save().unwrap();
         result
     }
@@ -224,6 +236,10 @@ impl ItemHandle {
         (): ()
     ) -> Result<(Path<'static>, ), MethodErr> {
         cr.remove::<Self>(ctx.path()).unwrap();
+
+        // TODO: 
+        // also remember to save
+
         Ok((Path::new("/").unwrap(),))
     }
 
@@ -253,7 +269,7 @@ impl ItemHandle {
     fn register_dbus(cr: &mut Crossroads) {
         let iface_token = cr.register("org.freedesktop.Secret.Item", |iface_builder: &mut IfaceBuilder<ItemHandle>| {
             iface_builder.method_with_cr("Delete", (), ("Prompt", ), Self::delete);
-            iface_builder.method("GetSecret", ("session", ), ("secret", ), Self::get_secret);
+            iface_builder.method("GetSecrets", ("session", ), ("secret", ), Self::get_secret);
             iface_builder.method("SetSecret", ("secret", ), (), Self::set_secret);
 
 
@@ -336,3 +352,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     cr.serve(&c)?;
     unreachable!()
 }
+
+// todo: implement unlock. it is called with empty array
+
+
+
+// method call time=1672515928.881481 sender=:1.221 -> destination=:1.218 serial=31 path=/org/freedesktop/secrets; interface=org.freedesktop.Secret.Service; member=GetSecrets
+//    array [
+//       object path "/org/freedesktop/secrets/collection/Login/1"
+//    ]
+//    object path "/org/freedesktop/secrets/session/0"
