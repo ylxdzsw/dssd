@@ -1,8 +1,9 @@
 #![allow(clippy::uninlined_format_args)]
+#![allow(clippy::type_complexity)]
 
-use dbus::{blocking::Connection, arg::{Variant, RefArg}, Path, MethodErr};
+use dbus::{blocking::Connection, arg::{Variant, RefArg, PropMap}, Path, MethodErr};
 use dbus_crossroads::{Crossroads, Context, IfaceToken, IfaceBuilder};
-use std::{error::Error, collections::{HashMap, BTreeSet, BTreeMap}, sync::{atomic::AtomicU64, Arc, Mutex}, cell::RefCell, env::VarError};
+use std::{error::Error, collections::BTreeMap, sync::{atomic::AtomicU64, Mutex}, env::VarError};
 use std::os::unix::fs::OpenOptionsExt;
 use serde::{Serialize, Deserialize};
 
@@ -18,6 +19,8 @@ mod serde_base64 {
         base64::decode(base64.as_bytes()).map_err(serde::de::Error::custom)
     }
 }
+
+type Secret = (Path<'static>, Vec<u8>, Vec<u8>, String);
 
 /// The global singleton storing all states of the application
 #[derive(Serialize, Deserialize, Debug)]
@@ -76,7 +79,7 @@ struct ItemHandle(String);
 
 impl ItemHandle {
     fn with_item<T>(&self, cb: impl FnOnce(&Item) -> T) -> T {
-        let mut service = service_mutex.lock().unwrap();
+        let service = service_mutex.lock().unwrap();
         let item = service.items.get(&self.0).unwrap();
         cb(item)
     }
@@ -102,7 +105,7 @@ impl ItemHandle {
         ctx: &mut Context,
         item_handle: &mut ItemHandle,
         (sess,): (Path<'static>,)
-    ) -> Result<((Path<'static>, Vec<u8>, Vec<u8>, String), ), MethodErr> {
+    ) -> Result<(Secret, ), MethodErr> {
         item_handle.with_item(|item| {
             Ok(((sess.clone(), vec![], item.content.clone(), item.content_type.clone()), ))
         })
@@ -111,7 +114,7 @@ impl ItemHandle {
     fn set_secret(
         ctx: &mut Context,
         item_handle: &mut ItemHandle,
-        (secret,): ((Path<'static>, Vec<u8>, Vec<u8>, String), )
+        (secret,): (Secret, )
     ) -> Result<(), MethodErr> {
         let (_, _, content, content_type) = secret;
         item_handle.with_item_mut(|item| {
@@ -153,17 +156,52 @@ impl ItemHandle {
     }
 }
 
+struct CollectionHandle;
+
+impl CollectionHandle {
+    fn create_item(
+        _: &mut Context,
+        _: &mut Crossroads,
+        (properties, secret, replace): (PropMap, Secret, bool)
+    ) -> Result<(Path<'static>, Path<'static>), MethodErr> {
+        let label = properties.get("org.freedesktop.Secret.Item.Label")
+            .and_then(|b| b.as_str().map(|x| x.to_string()))
+            .unwrap_or_default();
+        let attributes = properties.get("org.freedesktop.Secret.Item.Attributes")
+            .and_then(|b| Some(
+                dbus::arg::cast::<PropMap>(&b.0)?.into_iter()
+                    .map(|(k, v)| (k.to_string(), v.as_str().unwrap().to_string()))
+                    .collect::<BTreeMap<String, String>>()
+            ))
+            .unwrap_or_default();
+        
+        let now = get_unix_timestamp();
+        let item = Item { label, attributes, created: now, modified: now, ..Default::default() };
+
+
+        
+    }
+
+
+    fn register_dbus(cr: &mut Crossroads) -> IfaceToken<Self> {
+        cr.register("org.freedesktop.Secret.Collection", |iface_builder| {
+            // iface_builder.method()
+        })
+    }
+}
+
+
 struct ServiceHandle;
 
 impl ServiceHandle {
     fn open_session(
-        ctx: &mut Context,
-        cr: &mut Crossroads,
+        _: &mut Context,
+        _: &mut Crossroads,
         (algorithm, input): (String, Variant<Box<dyn RefArg>>)
     ) -> Result<(Variant<&'static str>, Path<'static>), MethodErr> {
         let service = service_mutex.lock().unwrap();
 
-        println!("{}, {:?}", algorithm, input);
+        eprintln!("{}, {:?}", algorithm, input);
         if algorithm != "plain" {
             return Err(dbus::Error::new_custom("org.freedesktop.DBus.Error.NotSupported", "").into())
         }
@@ -176,11 +214,11 @@ impl ServiceHandle {
     }
 
     fn search_item(
-        ctx: &mut Context,
+        _: &mut Context,
         _: &mut ServiceHandle,
-        (attributes,): (HashMap<String, String>,)
+        (attributes,): (BTreeMap<String, String>,)
     ) -> Result<(Vec<Path<'static>>, Vec<Path<'static>>), MethodErr> {
-        println!("{:?}", attributes);
+        eprintln!("{:?}", attributes);
                     
         Ok((Vec::<Path>::new(), Vec::<Path>::new()))
     }
@@ -197,6 +235,10 @@ fn get_config_directory() -> Result<String, VarError> {
     let xdg_config_dir = std::env::var("XDG_CONFIG_HOME").map(|x| format!("{x}/dssd"));
     let home_config_dir = std::env::var("HOME").map(|x| format!("{x}/.config/dssd"));
     xdg_config_dir.or(home_config_dir)
+}
+
+fn get_unix_timestamp() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
