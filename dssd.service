@@ -1,0 +1,7 @@
+[Unit]
+Description=Dead Simple Secret Daemon
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.secrets
+ExecStart=/usr/bin/dssd
