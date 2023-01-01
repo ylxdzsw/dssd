@@ -1,5 +1,4 @@
 #![allow(clippy::uninlined_format_args)]
-#![allow(clippy::type_complexity)]
 #![allow(non_upper_case_globals)]
 #![feature(let_chains)]
 
@@ -24,7 +23,7 @@ mod serde_base64 {
 
 type Secret = (Path<'static>, Vec<u8>, Vec<u8>, String);
 
-/// The global singleton storing all states of the application
+/// The global singleton storing persistent states of the application
 #[derive(Serialize, Deserialize, Debug)]
 struct Service {
     next_item_id: u64,
@@ -39,7 +38,6 @@ impl Service {
 
     fn save(&self) -> Result<(), Box<dyn Error>> {
         let config_dir = get_config_directory()?;
-        eprintln!("save to {config_dir}");
         std::fs::create_dir_all(&config_dir)?;
 
         let config_file = std::fs::OpenOptions::new()
@@ -105,9 +103,8 @@ impl ServiceHandle {
     fn open_session(
         _ctx: &mut Context,
         cr: &mut Crossroads,
-        (algorithm, input): (String, Variant<Box<dyn RefArg>>)
+        (algorithm, _input): (String, Variant<Box<dyn RefArg>>)
     ) -> Result<(Variant<&'static str>, Path<'static>), MethodErr> {
-        eprintln!("{}, {:?}", algorithm, input);
         if algorithm != "plain" {
             return Err(dbus::Error::new_custom("org.freedesktop.DBus.Error.NotSupported", "").into())
         }
@@ -121,9 +118,10 @@ impl ServiceHandle {
 
     fn search_item(
         _ctx: &mut Context,
-        _cr: &mut ServiceHandle,
+        _service_handle: &mut ServiceHandle,
         (attributes,): (BTreeMap<String, String>,)
     ) -> Result<(Vec<Path<'static>>, Vec<Path<'static>>), MethodErr> {
+        #[cfg(debug_assertions)]
         eprintln!("Search Item {attributes:?}");
 
         let service = service_mutex.lock().unwrap();
@@ -132,15 +130,56 @@ impl ServiceHandle {
             .map(Path::new)
             .collect();
 
+        #[cfg(debug_assertions)]
         eprintln!("Search Item Results {results:?}");
                     
         Ok((results.unwrap(), Vec::<Path>::new()))
+    }
+
+    fn unlock(
+        _ctx: &mut Context,
+        _service_handle: &mut ServiceHandle,
+        (objects,): (Vec<Path<'static>>,)
+    ) -> Result<(Vec<Path<'static>>, Path<'static>), MethodErr> {
+        Ok((objects, Path::new("/").unwrap()))
+    }
+
+    fn lock(
+        _ctx: &mut Context,
+        _service_handle: &mut ServiceHandle,
+        (_objects,): (Vec<Path<'static>>,)
+    ) -> Result<(Vec<Path<'static>>, Path<'static>), MethodErr> {
+        Ok((Vec::<Path>::new(), Path::new("/").unwrap()))
+    }
+
+    fn get_secrets(
+        _ctx: &mut Context,
+        cr: &mut Crossroads,
+        (items, session): (Vec<Path<'static>>, Path<'static>)
+    ) -> Result<(BTreeMap<Path<'static>, Secret>,), MethodErr> {
+        let result: Result<BTreeMap<_, _>, _> = items.into_iter().map(|item_path| {
+            let item_handle: &mut ItemHandle = cr.data_mut(&item_path).ok_or_else(|| MethodErr::no_path(&item_path))?;
+            item_handle.with_item(|item| {
+                Ok((item_path, (session.clone(), vec![], item.content.clone(), item.content_type.clone())))
+            })
+        }).collect();
+
+        #[cfg(debug_assertions)]
+        eprintln!("Get Secrets {:?}", result);
+
+        result.map(|x| (x,))
     }
 
     fn register_dbus(cr: &mut Crossroads) {
         let iface_token = cr.register("org.freedesktop.Secret.Service", |iface_builder| {
             iface_builder.method_with_cr("OpenSession", ("algorithm", "input"), ("output", "result"), Self::open_session);
             iface_builder.method("SearchItems", ("attributes",), ("unlocked", "locked"), Self::search_item);
+            iface_builder.method("Unlock", ("objects",), ("unlocked", "prompt"), Self::unlock);
+            iface_builder.method("Lock", ("objects",), ("locked", "Prompt"), Self::lock);
+            iface_builder.method_with_cr("GetSecrets", ("items", "session"), ("secrets",), Self::get_secrets);
+        
+            iface_builder.property("Collections")
+                .get(|_, _| Ok(vec![Path::new("/org/freedesktop/secrets/collection/Login").unwrap()]));
         });
 
         *service_iface_token_mutex.lock().unwrap() = Some(iface_token)
@@ -155,7 +194,7 @@ impl CollectionHandle {
         cr: &mut Crossroads,
         (properties, secret, replace): (PropMap, Secret, bool)
     ) -> Result<(Path<'static>, Path<'static>), MethodErr> {
-
+        #[cfg(debug_assertions)]
         eprintln!("Create Item: {properties:?} {secret:?} {replace:?}");
 
         let label = properties.get("org.freedesktop.Secret.Item.Label")
@@ -166,7 +205,6 @@ impl CollectionHandle {
                 let mut key = None;
                 let mut result = BTreeMap::new();
                 for x in b.0.as_iter()? {
-                    eprintln!("x {:?}", x);
                     let x = x.as_str().unwrap().to_string();
                     if let Some(k) = key.take() {
                         result.insert(k, x);
@@ -179,7 +217,6 @@ impl CollectionHandle {
             .unwrap_or_default();
         
         let (_, _, content, content_type) = secret;
-
         let now = get_unix_timestamp();
         let item = Item { label, attributes, created: now, modified: now, content, content_type };
 
@@ -235,10 +272,12 @@ impl ItemHandle {
         cr: &mut Crossroads,
         (): ()
     ) -> Result<(Path<'static>, ), MethodErr> {
+        let ItemHandle(item_id) = *cr.data_mut(ctx.path()).ok_or_else(|| MethodErr::no_path(ctx.path()))?;
         cr.remove::<Self>(ctx.path()).unwrap();
 
-        // TODO: 
-        // also remember to save
+        let mut service = service_mutex.lock().unwrap();
+        service.items.remove(&item_id);
+        service.save().unwrap();
 
         Ok((Path::new("/").unwrap(),))
     }
@@ -271,7 +310,6 @@ impl ItemHandle {
             iface_builder.method_with_cr("Delete", (), ("Prompt", ), Self::delete);
             iface_builder.method("GetSecrets", ("session", ), ("secret", ), Self::get_secret);
             iface_builder.method("SetSecret", ("secret", ), (), Self::set_secret);
-
 
             iface_builder.property("Locked")
                 .get(|_, _| Ok(false));
@@ -352,13 +390,3 @@ fn main() -> Result<(), Box<dyn Error>> {
     cr.serve(&c)?;
     unreachable!()
 }
-
-// todo: implement unlock. it is called with empty array
-
-
-
-// method call time=1672515928.881481 sender=:1.221 -> destination=:1.218 serial=31 path=/org/freedesktop/secrets; interface=org.freedesktop.Secret.Service; member=GetSecrets
-//    array [
-//       object path "/org/freedesktop/secrets/collection/Login/1"
-//    ]
-//    object path "/org/freedesktop/secrets/session/0"
