@@ -4,6 +4,7 @@ pkgrel=1
 arch=(any)
 license=(GPL3)
 makedepends=(cargo)
+depends=(dbus)
 
 package() {
     cd "$startdir"

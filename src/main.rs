@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 #![allow(non_upper_case_globals)]
 #![feature(let_chains)]
 
@@ -58,7 +57,7 @@ impl Service {
         }
 
         for &item_id in self.items.keys() {
-            let item_id_str = Item::id_to_string(item_id);
+            let item_id_str = format!("/org/freedesktop/secrets/collection/Login/{item_id}");
             cr.insert(item_id_str, &[item_iface_token_mutex.lock().unwrap().unwrap()], ItemHandle(item_id));
         }
 
@@ -82,12 +81,6 @@ struct Item {
     content_type: String,
     created: u64,
     modified: u64
-}
-
-impl Item {
-    fn id_to_string(id: u64) -> String {
-        format!("/org/freedesktop/secrets/collection/Login/{id}")
-    }
 }
 
 static next_sess_id: AtomicU64 = AtomicU64::new(0);
@@ -126,7 +119,7 @@ impl ServiceHandle {
 
         let service = service_mutex.lock().unwrap();
         let results: Result<Vec<_>, _> = service.find_by_attributes(&attributes).into_iter()
-            .map(Item::id_to_string)
+            .map(|id| format!("/org/freedesktop/secrets/collection/Login/{id}"))
             .map(Path::new)
             .collect();
 
@@ -165,7 +158,7 @@ impl ServiceHandle {
         }).collect();
 
         #[cfg(debug_assertions)]
-        eprintln!("Get Secrets {:?}", result);
+        eprintln!("Get Secrets {result:?}");
 
         result.map(|x| (x,))
     }
