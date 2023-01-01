@@ -28,7 +28,7 @@ jobs:
       - uses: actions/download-artifact@v2
       - run: |
           mkdir artifacts
-          mv dssd artifacts/dssd
+          mv dssd/dssd artifacts/dssd
       - uses: softprops/action-gh-release@v1
         with:
           draft: true
