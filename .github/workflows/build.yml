@@ -10,6 +10,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
+          profile: minimal
           override: true
       - run: sudo apt install libdbus-1-dev pkg-config
       - run: cargo build --release
