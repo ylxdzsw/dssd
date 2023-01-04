@@ -36,14 +36,14 @@ impl Service {
     }
 
     fn save(&self) -> Result<(), Box<dyn Error>> {
-        let config_dir = get_config_directory()?;
-        std::fs::create_dir_all(&config_dir)?;
+        let state_dir = get_state_directory()?;
+        std::fs::create_dir_all(&state_dir)?;
 
         let config_file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .mode(0o600)
-            .open(format!("{config_dir}/secrets"))?;
+            .open(format!("{state_dir}/secrets"))?;
 
         serde_json::to_writer(config_file, self)?;
 
@@ -51,8 +51,8 @@ impl Service {
     }
 
     fn load(&mut self, cr: &mut Crossroads) -> Result<(), Box<dyn Error>> {
-        let config_dir = get_config_directory()?;
-        if let Ok(file) = std::fs::File::open(format!("{config_dir}/secrets")) {
+        let state_dir = get_state_directory()?;
+        if let Ok(file) = std::fs::File::open(format!("{state_dir}/secrets")) {
             *self = serde_json::from_reader(file)?
         }
 
@@ -353,10 +353,10 @@ impl SessionHandle {
     }
 }
 
-fn get_config_directory() -> Result<String, VarError> {
-    let xdg_config_dir = std::env::var("XDG_CONFIG_HOME").map(|x| format!("{x}/dssd"));
-    let home_config_dir = std::env::var("HOME").map(|x| format!("{x}/.config/dssd"));
-    xdg_config_dir.or(home_config_dir)
+fn get_state_directory() -> Result<String, VarError> {
+    let xdg = std::env::var("XDG_STATE_HOME").map(|x| format!("{x}/dssd"));
+    let default = std::env::var("HOME").map(|x| format!("{x}/.local/state/dssd"));
+    xdg.or(default)
 }
 
 fn get_unix_timestamp() -> u64 {
