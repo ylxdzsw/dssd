@@ -5,6 +5,7 @@ arch=(any)
 license=(GPL3)
 makedepends=(cargo)
 depends=(dbus)
+provides=("org.freedesktop.secrets")
 
 package() {
     cd "$startdir"
