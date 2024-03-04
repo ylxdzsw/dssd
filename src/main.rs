@@ -1,5 +1,4 @@
 #![allow(non_upper_case_globals)]
-#![feature(let_chains)]
 
 use dbus::{blocking::Connection, arg::{Variant, RefArg, PropMap}, Path, MethodErr};
 use dbus_crossroads::{Crossroads, Context, IfaceToken, IfaceBuilder};
@@ -9,14 +8,15 @@ use serde::{Serialize, Deserialize};
 
 mod serde_base64 {
     use serde::{Serialize, Deserialize, Serializer, Deserializer};
+    use base64::prelude::*;
 
     pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-        String::serialize(&base64::encode(v), s)
+        String::serialize(&BASE64_STANDARD.encode(v), s)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
         let base64 = String::deserialize(d)?;
-        base64::decode(base64.as_bytes()).map_err(serde::de::Error::custom)
+        BASE64_STANDARD.decode(base64.as_bytes()).map_err(serde::de::Error::custom)
     }
 }
 
@@ -125,7 +125,7 @@ impl ServiceHandle {
 
         #[cfg(debug_assertions)]
         eprintln!("Search Item Results {results:?}");
-                    
+
         Ok((results.unwrap(), Vec::<Path>::new()))
     }
 
@@ -170,7 +170,7 @@ impl ServiceHandle {
             iface_builder.method("Unlock", ("objects",), ("unlocked", "prompt"), Self::unlock);
             iface_builder.method("Lock", ("objects",), ("locked", "Prompt"), Self::lock);
             iface_builder.method_with_cr("GetSecrets", ("items", "session"), ("secrets",), Self::get_secrets);
-        
+
             iface_builder.property("Collections")
                 .get(|_, _| Ok(vec![Path::new("/org/freedesktop/secrets/collection/Login").unwrap()]));
         });
@@ -208,16 +208,20 @@ impl CollectionHandle {
                 Some(result)
             })
             .unwrap_or_default();
-        
+
         let (_, _, content, content_type) = secret;
         let now = get_unix_timestamp();
         let item = Item { label, attributes, created: now, modified: now, content, content_type };
 
         let mut service = service_mutex.lock().unwrap();
 
-        let item_id = if replace && let Some(&item_id) = service.find_by_attributes(&item.attributes).first() {
-            item_id
-        } else {
+        let item_id = 'item_id: {
+            if replace {
+                if let Some(&item_id) = service.find_by_attributes(&item.attributes).first() {
+                    break 'item_id item_id
+                }
+            }
+
             let item_id = service.next_item_id;
             service.next_item_id += 1;
             item_id
@@ -323,7 +327,7 @@ impl ItemHandle {
 
             iface_builder.property("Created")
                 .get(|_, item_handle| item_handle.with_item(|item| Ok(item.created)));
-            
+
             iface_builder.property("Modified")
                 .get(|_, item_handle| item_handle.with_item(|item| Ok(item.modified)));
         });
