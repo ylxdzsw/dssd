@@ -2,6 +2,7 @@
 name = "dssd"
 version = "0.2.1"
 edition = "2021"
+license = "MIT"
 
 [profile.release]
 codegen-units = 1
