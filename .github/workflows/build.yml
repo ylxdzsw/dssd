@@ -7,10 +7,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt install libdbus-1-dev pkg-config
       - run: cargo build --release
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
           name: dssd
           path: target/release/dssd
@@ -21,7 +21,7 @@ jobs:
     needs: [test]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v4
       - run: |
           mkdir artifacts
           mv dssd/dssd artifacts/dssd
