@@ -57,7 +57,7 @@ impl Service {
         }
 
         for &item_id in self.items.keys() {
-            let item_id_str = format!("/org/freedesktop/secrets/collection/Login/{item_id}");
+            let item_id_str = format!("/org/freedesktop/secrets/collection/Login/i{item_id}");
             cr.insert(item_id_str, &[item_iface_token_mutex.lock().unwrap().unwrap()], ItemHandle(item_id));
         }
 
@@ -103,7 +103,7 @@ impl ServiceHandle {
         }
 
         let session_id = next_sess_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let session_id_str = format!("/org/freedesktop/secrets/session/{session_id}");
+        let session_id_str = format!("/org/freedesktop/secrets/session/s{session_id}");
         cr.insert(session_id_str.clone(), &[session_iface_token_mutex.lock().unwrap().unwrap()], SessionHandle);
 
         Ok((Variant(""), Path::new(session_id_str).unwrap()))
@@ -119,7 +119,7 @@ impl ServiceHandle {
 
         let service = service_mutex.lock().unwrap();
         let results: Result<Vec<_>, _> = service.find_by_attributes(&attributes).into_iter()
-            .map(|id| format!("/org/freedesktop/secrets/collection/Login/{id}"))
+            .map(|id| format!("/org/freedesktop/secrets/collection/Login/i{id}"))
             .map(Path::new)
             .collect();
 
@@ -182,6 +182,26 @@ impl ServiceHandle {
 struct CollectionHandle;
 
 impl CollectionHandle {
+    fn search_item(
+        _ctx: &mut Context,
+        _collection_handle: &mut CollectionHandle,
+        (attributes,): (BTreeMap<String, String>,)
+    ) -> Result<(Vec<Path<'static>>,), MethodErr> {
+        #[cfg(debug_assertions)]
+        eprintln!("Search Item {attributes:?} on Collection");
+
+        let service = service_mutex.lock().unwrap();
+        let results: Result<Vec<_>, _> = service.find_by_attributes(&attributes).into_iter()
+            .map(|id| format!("/org/freedesktop/secrets/collection/Login/i{id}"))
+            .map(Path::new)
+            .collect();
+
+        #[cfg(debug_assertions)]
+        eprintln!("Search Item Results {results:?}");
+
+        Ok((results.unwrap(),))
+    }
+
     fn create_item(
         _ctx: &mut Context,
         cr: &mut Crossroads,
@@ -230,7 +250,7 @@ impl CollectionHandle {
         service.items.insert(item_id, item);
         service.save().unwrap();
 
-        let item_id_str = format!("/org/freedesktop/secrets/collection/Login/{item_id}");
+        let item_id_str = format!("/org/freedesktop/secrets/collection/Login/i{item_id}");
         cr.insert(item_id_str.clone(), &[item_iface_token_mutex.lock().unwrap().unwrap()], ItemHandle(item_id));
 
         Ok((Path::new(item_id_str).unwrap(), Path::new("/").unwrap()))
@@ -238,6 +258,7 @@ impl CollectionHandle {
 
     fn register_dbus(cr: &mut Crossroads) {
         let iface_token = cr.register("org.freedesktop.Secret.Collection", |iface_builder| {
+            iface_builder.method("SearchItems", ("attributes",), ("results",), Self::search_item);
             iface_builder.method_with_cr("CreateItem", ("properties", "secret", "replace"), ("item", "prompt"), Self::create_item);
         });
 
@@ -305,7 +326,7 @@ impl ItemHandle {
     fn register_dbus(cr: &mut Crossroads) {
         let iface_token = cr.register("org.freedesktop.Secret.Item", |iface_builder: &mut IfaceBuilder<ItemHandle>| {
             iface_builder.method_with_cr("Delete", (), ("Prompt", ), Self::delete);
-            iface_builder.method("GetSecrets", ("session", ), ("secret", ), Self::get_secret);
+            iface_builder.method("GetSecret", ("session", ), ("secret", ), Self::get_secret);
             iface_builder.method("SetSecret", ("secret", ), (), Self::set_secret);
 
             iface_builder.property("Locked")
@@ -339,7 +360,7 @@ impl ItemHandle {
 struct SessionHandle;
 
 impl SessionHandle {
-    fn delete(
+    fn close(
         ctx: &mut Context,
         cr: &mut Crossroads,
         (): ()
@@ -350,7 +371,7 @@ impl SessionHandle {
 
     fn register_dbus(cr: &mut Crossroads) {
         let iface_token = cr.register("org.freedesktop.Secret.Session", |iface_builder: &mut IfaceBuilder<SessionHandle>| {
-            iface_builder.method_with_cr("Delete", (), (), Self::delete);
+            iface_builder.method_with_cr("Close", (), (), Self::close);
         });
 
         *session_iface_token_mutex.lock().unwrap() = Some(iface_token);
