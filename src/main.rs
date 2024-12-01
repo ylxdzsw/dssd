@@ -42,6 +42,7 @@ impl Service {
         let config_file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .mode(0o600)
             .open(format!("{state_dir}/secrets"))?;
 
