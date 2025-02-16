@@ -164,6 +164,26 @@ impl ServiceHandle {
         result.map(|x| (x,))
     }
 
+    fn read_alias(
+        _ctx: &mut Context,
+        _service_handle: &mut ServiceHandle,
+        (name,): (String,)
+    ) -> Result<(Path<'static>,), MethodErr> {
+        if name == "default" {
+            Ok((Path::new("/org/freedesktop/secrets/collection/Login").unwrap(),))
+        } else {
+            Ok((Path::new("/").unwrap(),))
+        }
+    }
+
+    fn set_alias(
+        _ctx: &mut Context,
+        _service_handle: &mut ServiceHandle,
+        (_name, _collection): (String, Path<'static>)
+    ) -> Result<(), MethodErr> {
+        Ok(())
+    }
+
     fn register_dbus(cr: &mut Crossroads) {
         let iface_token = cr.register("org.freedesktop.Secret.Service", |iface_builder| {
             iface_builder.method_with_cr("OpenSession", ("algorithm", "input"), ("output", "result"), Self::open_session);
@@ -171,6 +191,8 @@ impl ServiceHandle {
             iface_builder.method("Unlock", ("objects",), ("unlocked", "prompt"), Self::unlock);
             iface_builder.method("Lock", ("objects",), ("locked", "Prompt"), Self::lock);
             iface_builder.method_with_cr("GetSecrets", ("items", "session"), ("secrets",), Self::get_secrets);
+            iface_builder.method("ReadAlias", ("name",), ("collection",), Self::read_alias);
+            iface_builder.method("SetAlias", ("name", "collection"), (), Self::set_alias);
 
             iface_builder.property("Collections")
                 .get(|_, _| Ok(vec![Path::new("/org/freedesktop/secrets/collection/Login").unwrap()]));
