@@ -283,6 +283,28 @@ impl CollectionHandle {
         let iface_token = cr.register("org.freedesktop.Secret.Collection", |iface_builder| {
             iface_builder.method("SearchItems", ("attributes",), ("results",), Self::search_item);
             iface_builder.method_with_cr("CreateItem", ("properties", "secret", "replace"), ("item", "prompt"), Self::create_item);
+
+            iface_builder.property("Items")
+                .get(|_, _| {
+                    let items = service_mutex.lock().unwrap().items.keys()
+                        .map(|id| format!("/org/freedesktop/secrets/collection/Login/i{id}"))
+                        .map(Path::new)
+                        .collect::<Result<Vec<_>, _>>();
+                    Ok(items.unwrap())
+                });
+
+            iface_builder.property("Label")
+                .get(|_, _| Ok("Login".to_string()))
+                .set(|_, _, _| Ok(None));
+
+            iface_builder.property("Locked")
+                .get(|_, _| Ok(false));
+
+            iface_builder.property("Created")
+                .get(|_, _| Ok(service_mutex.lock().unwrap().items.values().map(|x| x.created).min().unwrap_or(0)));
+
+            iface_builder.property("Modified")
+                .get(|_, _| Ok(service_mutex.lock().unwrap().items.values().map(|x| x.modified).max().unwrap_or(0)));
         });
 
         *collection_iface_token_mutex.lock().unwrap() = Some(iface_token);
