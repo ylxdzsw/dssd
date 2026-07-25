@@ -259,10 +259,8 @@ impl CollectionHandle {
         let mut service = service_mutex.lock().unwrap();
 
         let item_id = 'item_id: {
-            if replace {
-                if let Some(&item_id) = service.find_by_attributes(&item.attributes).first() {
-                    break 'item_id item_id
-                }
+            if replace && let Some(&item_id) = service.find_by_attributes(&item.attributes).first() {
+                break 'item_id item_id
             }
 
             let item_id = service.next_item_id;
